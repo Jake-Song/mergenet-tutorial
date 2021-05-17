@@ -699,9 +699,9 @@ docker run \
   -itd $EXPLORER_IMAGE \
   ./explorer --config /config.yaml
 
-# move off to work properly for TEKU
+# sleep to fix the problem of connecting to TEKU
 
-echo "sleep to work properly for TEKU..."
+echo "sleep to fix the problem of connecting to TEKU"
 
 CURRENT_TIME=$(date +%s)
 SLEEP_TIME_FOR_TEKU=$((ETH2_GENESIS_TIMESTAMP-CURRENT_TIME))
