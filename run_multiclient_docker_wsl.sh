@@ -465,7 +465,6 @@ docker run \
   -u $(id -u):$(id -g) \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/validatordata" \
   -v "$TESTNET_PATH/public/eth2_config.yaml:/networkdata/eth2_config.yaml" \
-  -p 8100:8100 \
   -itd $PRYSM_VALIDATOR_IMAGE \
   --accept-terms-of-use=true \
   --datadir="/validatordata" \
@@ -571,9 +570,39 @@ if [ $NIMBUS_ENABLED != 0 ]; then  # TODO enable nimbus
     --secrets-dir="/validatordata/secrets"
 fi
 
-echo "Setting up fork monitor"
+echo "Setting up postgres database for explorer"
+NODE_NAME=postgres0
+NODE_PATH="$TESTNET_PATH/nodes/$NODE_NAME"
+mkdir -p "$NODE_PATH"
+# Run the database in the background
+docker run \
+  --name $NODE_NAME \
+  -e POSTGRES_PASSWORD=pass \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PORT=5432 \
+  -e POSTGRES_DB=db \
+  -e PGDATA=/postgresql/data \
+  -u $(id -u):$(id -g) \
+  -v "$NODE_PATH:/postgresql/data" \
+  -p 5432:5432 \
+  -itd $POSTGRES_IMAGE
 
-# Fork monitor setup
+postgres0_IP=$(docker inspect -f "{{ .NetworkSettings.Networks.bridge.IPAddress }}" postgres0)
+echo "postgres0: $postgres0_IP"
+
+# Wait for postgres docker container to get online
+sleep 5
+
+echo "Initializing the postgres tables..."
+docker run -it --rm \
+  -u $(id -u):$(id -g) \
+  -v "$EXPLORER_TABLES_SQL_PATH:/src/tables.sql" \
+  -it $POSTGRES_IMAGE \
+  psql -f /src/tables.sql -d db -h 172.17.0.12 -p 5432 -U postgres
+
+echo "Setting up explorer"
+
+# Set up eth2 config for fork monitor and explorer
 SLOTS_PER_EPOCH=32
 SECONDS_PER_SLOT=12
 ETH2_MIN_GENESIS_ACTIVE_VALIDATOR_COUNT=16384
@@ -583,6 +612,109 @@ if [ "$ETH2_SPEC_VARIANT" == "minimal" ]; then
   ETH2_MIN_GENESIS_ACTIVE_VALIDATOR_COUNT=64
 fi
 
+NODE_NAME=explorer0
+NODE_PATH="$TESTNET_PATH/nodes/$NODE_NAME"
+mkdir -p "$NODE_PATH"
+cat > "$NODE_PATH/imprint.html" << EOT
+{{ define "js"}}
+{{end}}
+
+{{ define "css"}}
+{{end}}
+
+{{ define "content"}}
+    {{with .Data}}
+        <div class="container mt-2">
+            <h2>Local merge testnet explorer! Fork of <a href="https://github.com/gobitfly/eth2-beaconchain-explorer">Eth2 beaconcha.in explorer</a>.</h2>
+        </div><a href="/" class="btn btn-primary mt-4">Back</a>
+        </div>
+    {{end}}
+{{end}}
+EOT
+
+cat > "$NODE_PATH/config.yaml"  << EOT
+# Database credentials
+database:
+  user: "postgres"
+  name: "db"
+  host: "172.17.0.12"
+  port: "5432"
+  password: "pass"
+
+# Chain network configuration
+chain:
+  slotsPerEpoch: ${SLOTS_PER_EPOCH}
+  secondsPerSlot: ${SECONDS_PER_SLOT}
+  minGenesisActiveValidatorCount: ${ETH2_MIN_GENESIS_ACTIVE_VALIDATOR_COUNT}
+  genesisTimestamp: ${ETH2_GENESIS_TIMESTAMP}
+  mainnet: false  # hide mainnet staking pool etc. info
+  phase0path: "/networkdata/eth2_config.yaml"
+
+# Note: It is possible to run either the frontend or the indexer or both at the same time
+# Frontend config
+frontend:
+  enabled: true # Enable or disable to web frontend
+  imprint: "/imprint.html"  # Path to the imprint page content
+  siteName: "Ethereum Merge Local Devnet Explorer" # Name of the site, displayed in the title tag
+  siteSubtitle: "Merge explorer" # Subtitle shown on the main page
+  csrfAuthKey: '0123456789abcdef000000000000000000000000000000000000000000000000'
+  jwtSigningSecret: "0123456789abcdef000000000000000000000000000000000000000000000000"
+  jwtIssuer: "localblockexplorer"
+  jwtValidityInMinutes: 30
+  server:
+    host: "172.17.0.13" # Address to listen on
+    port: "9333" # Port to listen on
+  database:
+    user: "postgres"
+    name: "db"
+    host: "172.17.0.12"
+    port: "5432"
+    password: "pass"
+  # sessionSecret: "<sessionSecret>"
+  # flashSecret: "" # Encryption secret for flash cookies
+
+# Indexer config
+indexer:
+  enabled: true # Enable or disable the indexing service
+  fullIndexOnStartup: false # Perform a one time full db index on startup
+  indexMissingEpochsOnStartup: true # Check for missing epochs and export them after startup
+  node:
+    host: "172.17.0.6" # Address of the backend node
+    port: "4100" # GRPC port of the Prysm node
+    type: "prysm" # can be either prysm or lighthouse
+    pageSize: 500 # the amount of entries to fetch per paged rpc call
+  eth1Endpoint: 'http://172.17.0.3:8500'
+  eth1DepositContractAddress: '0x4242424242424242424242424242424242424242'
+  # Note: 0 is correct, but due to an underflow bug (being fixed), doesn't work.
+  eth1DepositContractFirstBlock: 1
+EOT
+
+docker run \
+  --name $NODE_NAME \
+  -u $(id -u):$(id -g) \
+  -v "$NODE_PATH/config.yaml:/config.yaml" \
+  -v "$NODE_PATH/imprint.html:/imprint.html" \
+  -v "$TESTNET_PATH/public/eth2_config.yaml:/networkdata/eth2_config.yaml" \
+  -p 9333:9333 \
+  -itd $EXPLORER_IMAGE \
+  ./explorer --config /config.yaml
+
+# move off to work properly for TEKU
+
+echo "sleep to work properly for TEKU..."
+
+CURRENT_TIME=$(date +%s)
+SLEEP_TIME_FOR_TEKU=$((ETH2_GENESIS_TIMESTAMP-CURRENT_TIME))
+
+echo "GENESIS_TIME: $ETH2_GENESIS_TIMESTAMP"
+echo "CURRENT_TIME: $CURRENT_TIME"
+echo "SLEEP_TIME_FOR_TEKU: $SLEEP_TIME_FOR_TEKU"
+
+sleep $SLEEP_TIME_FOR_TEKU
+
+# Fork monitor setup
+
+echo "Setting up fork monitor"
 NODE_NAME=forkmon0
 NODE_PATH="$TESTNET_PATH/nodes/$NODE_NAME"
 mkdir -p "$NODE_PATH"
@@ -621,122 +753,3 @@ docker run \
 
 echo "fork monitor running at: http://127.0.0.1:8080/"
 
-
-echo "Setting up postgres database for explorer"
-NODE_NAME=postgres0
-NODE_PATH="$TESTNET_PATH/nodes/$NODE_NAME"
-mkdir -p "$NODE_PATH"
-# Run the database in the background
-docker run \
-  --name $NODE_NAME \
-  -e POSTGRES_PASSWORD=pass \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PORT=5432 \
-  -e POSTGRES_DB=db \
-  -e PGDATA=/postgresql/data \
-  -u $(id -u):$(id -g) \
-  -v "$NODE_PATH:/postgresql/data" \
-  -p 5432:5432 \
-  -itd $POSTGRES_IMAGE
-
-postgres0_IP=$(docker inspect -f "{{ .NetworkSettings.Networks.bridge.IPAddress }}" postgres0)
-echo "postgres0: $postgres0_IP"
-
-# # Wait for postgres docker container to get online
-sleep 5
-
-echo "Initializing the postgres tables..."
-docker run -it --rm \
-  -u $(id -u):$(id -g) \
-  -v "$EXPLORER_TABLES_SQL_PATH:/src/tables.sql" \
-  -it $POSTGRES_IMAGE \
-  psql -f /src/tables.sql -d db -h 172.17.0.13 -p 5432 -U postgres
-
-echo "Setting up explorer"
-
-NODE_NAME=explorer0
-NODE_PATH="$TESTNET_PATH/nodes/$NODE_NAME"
-mkdir -p "$NODE_PATH"
-cat > "$NODE_PATH/imprint.html" << EOT
-{{ define "js"}}
-{{end}}
-
-{{ define "css"}}
-{{end}}
-
-{{ define "content"}}
-    {{with .Data}}
-        <div class="container mt-2">
-            <h2>Local merge testnet explorer! Fork of <a href="https://github.com/gobitfly/eth2-beaconchain-explorer">Eth2 beaconcha.in explorer</a>.</h2>
-        </div><a href="/" class="btn btn-primary mt-4">Back</a>
-        </div>
-    {{end}}
-{{end}}
-EOT
-
-cat > "$NODE_PATH/config.yaml"  << EOT
-# Database credentials
-database:
-  user: "postgres"
-  name: "db"
-  host: "172.17.0.13"
-  port: "5432"
-  password: "pass"
-
-# Chain network configuration
-chain:
-  slotsPerEpoch: ${SLOTS_PER_EPOCH}
-  secondsPerSlot: ${SECONDS_PER_SLOT}
-  minGenesisActiveValidatorCount: ${ETH2_MIN_GENESIS_ACTIVE_VALIDATOR_COUNT}
-  genesisTimestamp: ${ETH2_GENESIS_TIMESTAMP}
-  mainnet: false  # hide mainnet staking pool etc. info
-  phase0path: "/networkdata/eth2_config.yaml"
-
-# Note: It is possible to run either the frontend or the indexer or both at the same time
-# Frontend config
-frontend:
-  enabled: true # Enable or disable to web frontend
-  imprint: "/imprint.html"  # Path to the imprint page content
-  siteName: "Ethereum Merge Local Devnet Explorer" # Name of the site, displayed in the title tag
-  siteSubtitle: "Merge explorer" # Subtitle shown on the main page
-  csrfAuthKey: '0123456789abcdef000000000000000000000000000000000000000000000000'
-  jwtSigningSecret: "0123456789abcdef000000000000000000000000000000000000000000000000"
-  jwtIssuer: "localblockexplorer"
-  jwtValidityInMinutes: 30
-  server:
-    host: "172.17.0.14" # Address to listen on
-    port: "9333" # Port to listen on
-  database:
-    user: "postgres"
-    name: "db"
-    host: "172.17.0.13"
-    port: "5432"
-    password: "pass"
-  # sessionSecret: "<sessionSecret>"
-  # flashSecret: "" # Encryption secret for flash cookies
-
-# Indexer config
-indexer:
-  enabled: true # Enable or disable the indexing service
-  fullIndexOnStartup: false # Perform a one time full db index on startup
-  indexMissingEpochsOnStartup: true # Check for missing epochs and export them after startup
-  node:
-    host: "172.17.0.6" # Address of the backend node
-    port: "4100" # GRPC port of the Prysm node
-    type: "prysm" # can be either prysm or lighthouse
-    pageSize: 500 # the amount of entries to fetch per paged rpc call
-  eth1Endpoint: 'http://172.17.0.3:8500'
-  eth1DepositContractAddress: '0x4242424242424242424242424242424242424242'
-  # Note: 0 is correct, but due to an underflow bug (being fixed), doesn't work.
-  eth1DepositContractFirstBlock: 1
-EOT
-
-docker run \
-  --name $NODE_NAME \
-  -u $(id -u):$(id -g) \
-  -v "$NODE_PATH/config.yaml:/config.yaml" \
-  -v "$NODE_PATH/imprint.html:/imprint.html" \
-  -v "$TESTNET_PATH/public/eth2_config.yaml:/networkdata/eth2_config.yaml" \
-  -p 9333:9333 \
-  -itd $EXPLORER_IMAGE \
-  ./explorer --config /config.yaml
