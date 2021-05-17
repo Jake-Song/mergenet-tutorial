@@ -113,10 +113,10 @@ docker run \
   --rm \
   -u $(id -u):$(id -g) \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/data" \
-  --net host \
+  -p 10000:10000 -p 11000:11000 \
   -itd $BOOTNODE_IMAGE \
   --api-addr "0.0.0.0:10000" \
-  --enr-ip "127.0.0.1" \
+  --enr-ip "172.17.0.2" \
   --enr-udp "11000" \
   --listen-ip "0.0.0.0" \
   --listen-udp "11000" \
@@ -125,7 +125,10 @@ docker run \
   --priv="c481fa289efe87b258365f057e6c3afa51dbbbf31d9c38246b36d0a48da326ee"
 
 # you can fetch this from `http://localhost:10000/enr"
-BOOTNODE_ENR="enr:-Ku4QOhH76YiJtgBrVBAmiotsLxS9lpdxbtYkpTdLen7CZCyTMCjcSuwcRnFggwn-IHbSEL2RC6kC-2BUHBf5yiVI3sBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpD1pf1CAAAAAP__________gmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQN0nREs-mofKzp_XQ1M1xFrOkr9gMMgCdLFbvH7aPQHT4N1ZHCCKvg"
+BOOTNODE_ENR="enr:-Ku4QFPL4phPE7bkGgfWx_zfzWww3rLI44t-5B3qj_v8kKCeDQsOzFWgp3k6phHGs1O83eammATFSZERleO7unb_hcgBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpAxrqhvAAAHAP__________gmlkgnY0gmlwhKwRAAKJc2VjcDI1NmsxoQN0nREs-mofKzp_XQ1M1xFrOkr9gMMgCdLFbvH7aPQHT4N1ZHCCKvg"
+bootnode0_IP=$(docker inspect -f "{{ .NetworkSettings.Networks.bridge.IPAddress }}" bootnode0)
+
+echo "bootnode0_IP: $bootnode0_IP"
 
 echo "Preparing keystores"
 
@@ -212,7 +215,6 @@ docker run \
   -u $(id -u):$(id -g) \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/gethdata" \
   -v "$TESTNET_PATH/public/eth1_config.json:/networkdata/eth1_config.json" \
-  --net host \
   $GETH_IMAGE \
   --catalyst \
   --datadir "/gethdata/chaindata" \
@@ -226,9 +228,9 @@ echo "starting geth node"
 NODE_NAME=catalyst0
 docker run \
   --name "$NODE_NAME" \
-  --net host \
   -u $(id -u):$(id -g) \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/gethdata" \
+  -p 8500:8500 -p 8600:8600 -p 30303:30303 \
   -itd $GETH_IMAGE \
   --catalyst \
   --http --http.api net,eth,consensus \
@@ -243,6 +245,9 @@ docker run \
   --miner.etherbase 0x1000000000000000000000000000000000000000 \
   --datadir "/gethdata/chaindata"
 
+catalyst0_IP=$(docker inspect -f "{{ .NetworkSettings.Networks.bridge.IPAddress }}" catalyst0)
+echo "catalyst0_IP: $catalyst0_IP"
+
 # Nethermind
 # Note: networking is active, the transaction pool propagation is active on nethermind
 echo "starting nethermind node"
@@ -251,9 +256,9 @@ NODE_NAME=nethermind0
 mkdir "$TESTNET_PATH/nodes/$NODE_NAME"
 docker run \
   --name $NODE_NAME \
-  --net host \
   -v "$TESTNET_PATH/public/eth1_nethermind_config.json:/networkdata/eth1_nethermind_config.json" \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/netherminddata" \
+  -p 8501:8501 -p 8601:8601 -p 30301:30301 \
   -itd $NETHERMIND_IMAGE \
   -c catalyst \
   --datadir "/netherminddata" \
@@ -268,16 +273,19 @@ docker run \
   --Network.P2PPort 30301 \
   --Merge.BlockAuthorAccount 0x1000000000000000000000000000000000000000
 
+nethermind0_IP=$(docker inspect -f "{{ .NetworkSettings.Networks.bridge.IPAddress }}" nethermind0)
+echo "nethermind0_IP: $nethermind0_IP"
+
 # Besu
 echo "starting besu node"
 NODE_NAME=besu0
 mkdir "$TESTNET_PATH/nodes/$NODE_NAME"
 docker run \
   --name $NODE_NAME \
-  --net host \
   -v "$TESTNET_PATH/public/eth1_config.json:/networkdata/eth1_config.json" \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/besudata" \
   -u $(id -u):$(id -g) \
+  -p 8502:8502 -p 8602:8602 -p 30302:30302 \
   -itd $BESU_IMAGE \
   --logging trace \
   --data-path="/besudata" \
@@ -292,7 +300,11 @@ docker run \
   --p2p-port=30302 \
   --Xmerge-support=true \
   --discovery-enabled=false \
-  --miner-coinbase="0x1000000000000000000000000000000000000000"
+  --miner-coinbase="0x1000000000000000000000000000000000000000" \
+  --host-allowlist="*" \
+
+besu0_IP=$(docker inspect -f "{{ .NetworkSettings.Networks.bridge.IPAddress }}" besu0)
+echo "besu0_IP: $besu0_IP"
 
 # Run eth2 beacon nodes
 
@@ -302,17 +314,17 @@ NODE_NAME=prysm0bn
 mkdir "$TESTNET_PATH/nodes/$NODE_NAME"
 docker run \
   --name $NODE_NAME \
-  --net host \
   -u $(id -u):$(id -g) \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/beacondata" \
   -v "$TESTNET_PATH/public/eth2_config.yaml:/networkdata/eth2_config.yaml" \
   -v "$TESTNET_PATH/public/genesis.ssz:/networkdata/genesis.ssz" \
+  -p 9000:9000 -p 8000:8000 -p 4000:4000 \
   -itd $PRYSM_BEACON_IMAGE \
   --accept-terms-of-use=true \
   --datadir="/beacondata" \
   --min-sync-peers=0 \
   --contract-deployment-block 0 \
-  --http-web3provider="http://127.0.0.1:8500" \
+  --http-web3provider="http://172.17.0.3:8500" \
   --bootstrap-node="$BOOTNODE_ENR" \
   --chain-config-file="/networkdata/eth2_config.yaml" \
   --genesis-state="/networkdata/genesis.ssz" \
@@ -330,24 +342,27 @@ docker run \
   --slots-per-archive-point=64
 # Note: --slots-per-archive-point=64 is to improve local chain explorer performance by storing more state snapshots
 
+prysm0bn_IP=$(docker inspect -f "{{ .NetworkSettings.Networks.bridge.IPAddress }}" prysm0bn)
+echo "prysm0bn_IP: $prysm0bn_IP"
+
 # Teku
 echo "starting teku beacon node"
 NODE_NAME=teku0bn
 mkdir "$TESTNET_PATH/nodes/$NODE_NAME"
 docker run \
   --name $NODE_NAME \
-  --net host \
   -u $(id -u):$(id -g) \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/beacondata" \
   -v "$TESTNET_PATH/public/eth2_config.yaml:/networkdata/eth2_config.yaml" \
   -v "$TESTNET_PATH/public/genesis.ssz:/networkdata/genesis.ssz" \
+  -p 8001:8001 -p 9001:9001 -p 4001:4001 \
   -itd $TEKU_DOCKER_IMAGE \
   --network "/networkdata/eth2_config.yaml" \
   --data-path "/beacondata" \
   --p2p-enabled=true \
   --logging=TRACE \
   --initial-state "/networkdata/genesis.ssz" \
-  --eth1-endpoint "http://127.0.0.1:8501" \
+  --eth1-endpoint "http://172.17.0.4:8501" \
   --p2p-discovery-bootnodes "$BOOTNODE_ENR" \
   --metrics-enabled=true --metrics-interface=0.0.0.0 --metrics-port=8001 \
   --p2p-discovery-enabled=true \
@@ -357,7 +372,12 @@ docker run \
   --rest-api-docs-enabled=true \
   --rest-api-interface=0.0.0.0 \
   --rest-api-port=4001 \
-  --Xdata-storage-non-canonical-blocks-enabled=true
+  --Xdata-storage-non-canonical-blocks-enabled=true \
+  --rest-api-host-allowlist="*" \
+  --rest-api-cors-origins="*"
+
+teku0bn_IP=$(docker inspect -f "{{ .NetworkSettings.Networks.bridge.IPAddress }}" teku0bn)
+echo "teku0bn_IP: $teku0bn_IP"
 
 # Lighthouse
 echo "starting lighthouse beacon node"
@@ -365,11 +385,11 @@ NODE_NAME=lighthouse0bn
 mkdir "$TESTNET_PATH/nodes/$NODE_NAME"
 docker run \
   --name $NODE_NAME \
-  --net host \
   -u $(id -u):$(id -g) \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/beacondata" \
   -v "$TESTNET_PATH/public/eth2_config.yaml:/networkdata/eth2_config.yaml" \
   -v "$TESTNET_PATH/public/genesis.ssz:/networkdata/genesis.ssz" \
+  -p 4002:4002 -p 8002:8002 -p 9002:9002 \
   -itd $LIGHTHOUSE_DOCKER_IMAGE \
   lighthouse \
   --datadir "/beacondata" \
@@ -378,7 +398,7 @@ docker run \
   --testnet-yaml-config "/networkdata/eth2_config.yaml" \
   --debug-level=trace \
   beacon_node \
-  --eth1 --eth1-endpoints "http://127.0.0.1:8502" \
+  --eth1 --eth1-endpoints "http://127.0.0.1:8502, http://172.17.0.5:8502" \
   --boot-nodes "$BOOTNODE_ENR" \
   --http \
   --http-address 0.0.0.0 \
@@ -389,6 +409,9 @@ docker run \
   --listen-address 0.0.0.0 \
   --port 9002
 
+lighthouse0bn_IP=$(docker inspect -f "{{ .NetworkSettings.Networks.bridge.IPAddress }}" lighthouse0bn)
+echo "lighthouse0bn_IP: $lighthouse0bn_IP"
+
 if [ $NIMBUS_ENABLED != 0 ]; then
   # Nimbus # TODO: another eth1 node for nimbus to connect to, with websocket RPC exposed (nimbus doesn't support http rpc for eth1 connection)
   echo "starting nimbus beacon node"
@@ -397,7 +420,6 @@ if [ $NIMBUS_ENABLED != 0 ]; then
   mkdir -p "$TESTNET_PATH/nodes/$NODE_NAME/no_bn_secrets"
   docker run \
     --name $NODE_NAME \
-    --net host \
     -u $(id -u):$(id -g) \
     -v "$TESTNET_PATH/nodes/$NODE_NAME:/beacondata" \
     -v "$TESTNET_PATH/public/nimbus_config.json:/networkdata/nimbus_config.json" \
@@ -440,15 +462,15 @@ fi
 
 docker run \
   --name $NODE_NAME \
-  --net host \
   -u $(id -u):$(id -g) \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/validatordata" \
   -v "$TESTNET_PATH/public/eth2_config.yaml:/networkdata/eth2_config.yaml" \
+  -p 8100:8100 \
   -itd $PRYSM_VALIDATOR_IMAGE \
   --accept-terms-of-use=true \
   --datadir="/validatordata" \
   --chain-config-file="/networkdata/eth2_config.yaml" \
-  --beacon-rpc-provider=localhost:4100 \
+  --beacon-rpc-provider=$prysm0bn_IP:4100 \
   --graffiti="prysm" \
   --monitoring-host=0.0.0.0 --monitoring-port=8100 \
   --wallet-dir=/validatordata/wallet \
@@ -471,7 +493,6 @@ fi
 
 docker run \
   --name $NODE_NAME \
-  --net host \
   -u $(id -u):$(id -g) \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/validatordata" \
   -v "$TESTNET_PATH/public/eth2_config.yaml:/networkdata/eth2_config.yaml" \
@@ -480,10 +501,10 @@ docker run \
   validator-client \
   --network "/networkdata/eth2_config.yaml" \
   --data-path "/validatordata" \
-  --beacon-node-api-endpoint "http://127.0.0.1:4001" \
+  --beacon-node-api-endpoint http://$teku0bn_IP:4001 \
   --validators-graffiti="teku" \
-  --validator-keys "/validatordata/keys:/validatordata/secrets"
-
+  --validator-keys "/validatordata/keys:/validatordata/secrets" \
+ 
 
 # Lighthouse
 echo "starting lighthouse validator client"
@@ -501,7 +522,6 @@ fi
 
 docker run \
   --name $NODE_NAME \
-  --net host \
   -u $(id -u):$(id -g) \
   -v "$TESTNET_PATH/nodes/$NODE_NAME:/validatordata" \
   -v "$TESTNET_PATH/public/eth2_config.yaml:/networkdata/eth2_config.yaml" \
@@ -513,7 +533,7 @@ docker run \
   --testnet-yaml-config "/networkdata/eth2_config.yaml" \
   validator_client \
   --init-slashing-protection \
-  --beacon-nodes "http://127.0.0.1:4002" \
+  --beacon-nodes http://172.17.0.8:4002 \
   --graffiti="lighthouse" \
   --validators-dir "/validatordata/keys" \
   --secrets-dir "/validatordata/secrets"
@@ -536,7 +556,6 @@ if [ $NIMBUS_ENABLED != 0 ]; then  # TODO enable nimbus
 
   docker run \
     --name $NODE_NAME \
-    --net host \
     -u $(id -u):$(id -g) \
     -v "$TESTNET_PATH/nodes/$NODE_NAME:/validatordata" \
     -itd $NIMBUS_DOCKER_IMAGE \
@@ -575,13 +594,13 @@ etherscan_api_key: ""
 http_timeout_milliseconds: 2000
 endpoints:
   # Prysm
-  - addr: http://127.0.0.1:4000
+  - addr: http://172.17.0.6:4000
     eth1: Geth
   # Teku
-  - addr: http://127.0.0.1:4001
+  - addr: "http://172.17.0.7:4001"
     eth1: Nethermind
   # Lighthouse
-  - addr: http://127.0.0.1:4002
+  - addr: http://172.17.0.8:4002
     eth1: Besu
 # Dir for web assets
 outputDir: /public
@@ -594,9 +613,9 @@ EOT
 
 docker run \
   --name $NODE_NAME \
-  --net host \
   -u $(id -u):$(id -g) \
   -v "$NODE_PATH:/data" \
+  -p 8080:8080 \
   -itd $FORKMON_IMAGE \
   -config-file=/data/config.yaml
 
@@ -610,7 +629,6 @@ mkdir -p "$NODE_PATH"
 # Run the database in the background
 docker run \
   --name $NODE_NAME \
-  --net host \
   -e POSTGRES_PASSWORD=pass \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PORT=5432 \
@@ -618,19 +636,21 @@ docker run \
   -e PGDATA=/postgresql/data \
   -u $(id -u):$(id -g) \
   -v "$NODE_PATH:/postgresql/data" \
+  -p 5432:5432 \
   -itd $POSTGRES_IMAGE
 
-# Wait for postgres docker container to get online
+postgres0_IP=$(docker inspect -f "{{ .NetworkSettings.Networks.bridge.IPAddress }}" postgres0)
+echo "postgres0: $postgres0_IP"
+
+# # Wait for postgres docker container to get online
 sleep 5
 
 echo "Initializing the postgres tables..."
 docker run -it --rm \
-  --net=host \
   -u $(id -u):$(id -g) \
   -v "$EXPLORER_TABLES_SQL_PATH:/src/tables.sql" \
   -it $POSTGRES_IMAGE \
-  psql -f /src/tables.sql -d db -h 0.0.0.0 -p 5432 -U postgres
-
+  psql -f /src/tables.sql -d db -h 172.17.0.13 -p 5432 -U postgres
 
 echo "Setting up explorer"
 
@@ -659,7 +679,7 @@ cat > "$NODE_PATH/config.yaml"  << EOT
 database:
   user: "postgres"
   name: "db"
-  host: "127.0.0.1"
+  host: "172.17.0.13"
   port: "5432"
   password: "pass"
 
@@ -684,12 +704,12 @@ frontend:
   jwtIssuer: "localblockexplorer"
   jwtValidityInMinutes: 30
   server:
-    host: "localhost" # Address to listen on
+    host: "172.17.0.14" # Address to listen on
     port: "9333" # Port to listen on
   database:
     user: "postgres"
     name: "db"
-    host: "127.0.0.1"
+    host: "172.17.0.13"
     port: "5432"
     password: "pass"
   # sessionSecret: "<sessionSecret>"
@@ -701,11 +721,11 @@ indexer:
   fullIndexOnStartup: false # Perform a one time full db index on startup
   indexMissingEpochsOnStartup: true # Check for missing epochs and export them after startup
   node:
-    host: "localhost" # Address of the backend node
+    host: "172.17.0.6" # Address of the backend node
     port: "4100" # GRPC port of the Prysm node
     type: "prysm" # can be either prysm or lighthouse
     pageSize: 500 # the amount of entries to fetch per paged rpc call
-  eth1Endpoint: 'http://127.0.0.1:8500'
+  eth1Endpoint: 'http://172.17.0.3:8500'
   eth1DepositContractAddress: '0x4242424242424242424242424242424242424242'
   # Note: 0 is correct, but due to an underflow bug (being fixed), doesn't work.
   eth1DepositContractFirstBlock: 1
@@ -713,10 +733,10 @@ EOT
 
 docker run \
   --name $NODE_NAME \
-  --net host \
   -u $(id -u):$(id -g) \
   -v "$NODE_PATH/config.yaml:/config.yaml" \
   -v "$NODE_PATH/imprint.html:/imprint.html" \
   -v "$TESTNET_PATH/public/eth2_config.yaml:/networkdata/eth2_config.yaml" \
+  -p 9333:9333 \
   -itd $EXPLORER_IMAGE \
   ./explorer --config /config.yaml
